@@ -260,9 +260,9 @@ function renderTimeline() {
     els.timelineBottom.textContent = "Waiting for experiment";
     return;
   }
-  els.timeline.innerHTML = sequence().slice(1, step + 1).map(event => {
+  els.timeline.innerHTML = sequence().slice(1, step + 1).map((event, index) => {
     const symbol = event.kind === "danger" ? "×" : event.kind === "warning" ? "!" : event.kind === "safe" ? "✓" : "•";
-    return '<div class="event is-' + event.kind + '"><span class="event-time">' + String(event.ms).padStart(4, "0") + 'ms</span><span class="event-symbol">' + symbol + '</span><div class="event-copy"><strong>' + escapeHtml(event.title) + '</strong><span>' + escapeHtml(event.detail) + '</span></div></div>';
+    return '<div class="event is-' + event.kind + (index === step - 1 ? ' is-new' : '') + '"><span class="event-time">' + String(event.ms).padStart(4, "0") + 'ms</span><span class="event-symbol">' + symbol + '</span><div class="event-copy"><strong>' + escapeHtml(event.title) + '</strong><span>' + escapeHtml(event.detail) + '</span></div></div>';
   }).join("");
   els.timeline.scrollTop = els.timeline.scrollHeight;
   els.timelineBottom.textContent = step === sequence().length - 1 ? "Scenario complete · " + trialMeta[mode].source + " data" : "Stepping through " + trialMeta[mode].source + " events";
@@ -359,7 +359,7 @@ function renderAnalysis(frame) {
 
   els.analysisBars.innerHTML = history.map((item, index) => {
     const state = item.score >= 85 ? "danger" : item.score >= 70 ? "warn" : "";
-    return '<div class="analysis-bar-wrap"><span class="analysis-bar-value">' + item.score + '</span><span class="analysis-bar ' + state + '" style="height:' + Math.max(item.score, 3) + '%"></span><span class="analysis-bar-label">' + String(index).padStart(2, "0") + '</span></div>';
+    return '<div class="analysis-bar-wrap" style="--i:' + index + '"><span class="analysis-bar-value">' + item.score + '</span><span class="analysis-bar ' + state + '" style="--i:' + index + ';height:' + Math.max(item.score, 3) + '%"></span><span class="analysis-bar-label">' + String(index).padStart(2, "0") + '</span></div>';
   }).join("");
   els.analysisOwnerA.textContent = frame.owners.A || "FREE";
   els.analysisOwnerB.textContent = frame.owners.B || "FREE";
@@ -420,11 +420,28 @@ function render() {
   els.restoreButton.hidden = source.source === "demo";
   els.scenarioOutcome.textContent = source.source !== "demo" ? "Viewing recorded trial " + source.runId :
     mode === "protected" ? "Common order applied before lock acquisition" : "Unordered acquisition can create a circular wait";
+  const last = step === sequence().length - 1;
+  const cycle = DeadlockTrialData.hasCycle(frame);
+  document.dispatchEvent(new CustomEvent("lab:frame", { detail: {
+    frame, mode, step, last, threshold: scoringConfig.threshold,
+    state: cycle || (trialMeta[mode].status === "deadlock" && last) ? "danger"
+      : trialMeta[mode].status === "completed" && last ? "safe"
+      : frame.score >= scoringConfig.threshold ? "warning" : "calm"
+  } }));
 }
 
 const viewNames = { lab: "SIMULATION LAB", analysis: "ANALYSIS", compare: "COMPARE RUNS", method: "HOW IT WORKS" };
 function showView(name) {
   if (!viewNames[name]) return;
+  if (document.startViewTransition && !showView.inTransition && !document.getElementById("view-" + name).classList.contains("is-visible")) {
+    showView.inTransition = true;
+    document.startViewTransition(() => applyView(name)).finished.finally(() => { showView.inTransition = false; });
+  } else {
+    applyView(name);
+  }
+}
+
+function applyView(name) {
   document.querySelectorAll(".view").forEach(section => section.classList.toggle("is-visible", section.id === "view-" + name));
   document.querySelectorAll(".nav-item").forEach(button => {
     const active = button.dataset.view === name;
@@ -441,7 +458,8 @@ function showView(name) {
   } else {
     els.sourceBadge.textContent = trialMeta[mode].source === "demo" ? "DEMO DATA" : trialMeta[mode].source === "live" ? "LIVE TRIAL" : "IMPORTED TRIAL";
   }
-  window.scrollTo({ top: 0, behavior: "smooth" });
+  window.scrollTo({ top: 0, behavior: "instant" });
+  document.dispatchEvent(new CustomEvent("lab:view", { detail: { name } }));
 }
 
 function exportCsv() {
